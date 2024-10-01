@@ -72,10 +72,30 @@ public class RateHistoryConverter {
     }
 
     private static LocalDate parseDateFromHeader(Cell cell) {
-        String headerDateStr = cell.getStringCellValue();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/yyyy");
-        return LocalDate.parse("01/" + headerDateStr, formatter); // First day of the month
+        if (cell == null) {
+            throw new IllegalArgumentException("Cell is null.");
+        }
+
+        // Check if the cell contains a numeric or string value
+        if (cell.getCellType() == CellType.STRING) {
+            // Handle String cell value (MM/yyyy format)
+            String headerDateStr = cell.getStringCellValue();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/yyyy");
+            return LocalDate.parse("01/" + headerDateStr, formatter); // Parsing with a fixed first day of the month
+        } else if (cell.getCellType() == CellType.NUMERIC) {
+            // Handle Numeric cell value (which could be a date)
+            if (DateUtil.isCellDateFormatted(cell)) {
+                // If it's a date, retrieve it as a LocalDate
+                Date date = cell.getDateCellValue();
+                return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+            } else {
+                throw new IllegalStateException("Unexpected numeric cell that is not formatted as a date.");
+            }
+        } else {
+            throw new IllegalStateException("Unexpected cell type: " + cell.getCellType());
+        }
     }
+
 
     private static void writeOutputFile(String outputFilePath, List<RateSpan> rateSpans) {
         try (Workbook workbook = new XSSFWorkbook();
