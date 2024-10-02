@@ -6,154 +6,139 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
-/**
- * Hello world!
- */
 public class RateHistoryConverter {
-	public static void main(String[] args) {
-        String inputFilePath = "C:\\Users\\rajas\\Desktop\\ratecompare\\Rate History.xlsx";
-        String outputFilePath = "C:\\Users\\rajas\\Desktop\\ratecompare\\Output\\Output Rate History.xlsx";
 
-        try (FileInputStream fis = new FileInputStream(inputFilePath);
-             Workbook workbook = new XSSFWorkbook(fis)) {
+    private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
 
-            Sheet inputSheet = workbook.getSheetAt(0); // Assuming the data is in the first sheet
-            List<RateSpan> rateSpans = processRateHistory(inputSheet);
+    public static void main(String[] args) throws IOException {
+        FileInputStream inputStream = new FileInputStream("/mnt/data/Rate History.xlsx"); // Adjust path accordingly
+        Workbook workbook = new XSSFWorkbook(inputStream);
+        Sheet sheet = workbook.getSheetAt(0);
 
-            writeOutputFile(outputFilePath, rateSpans);
+        // Output workbook and sheet
+        Workbook outputWorkbook = new XSSFWorkbook();
+        Sheet outputSheet = outputWorkbook.createSheet("Rate History Output");
 
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
+        Map<String, List<RateSpan>> rateSpansMap = new LinkedHashMap<>();
 
-    private static List<RateSpan> processRateHistory(Sheet sheet) {
-        List<RateSpan> rateSpans = new ArrayList<>();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+        // Read header row (for the dates)
+        Row headerRow = sheet.getRow(0);
+        int numColumns = headerRow.getPhysicalNumberOfCells();
 
-        Row headerRow = sheet.getRow(0); // Header row (containing month/year)
-        int columnStartIndex = 3; // Column D is index 3
-
+        // Read data starting from the second row
         for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
             Row row = sheet.getRow(rowIndex);
             if (row == null) continue;
 
-            String code = row.getCell(0).getStringCellValue();
-            Double currentRate = null;
-            LocalDate spanStartDate = null;
+            String proc = row.getCell(0).getStringCellValue(); // PROC
+            String mod = row.getCell(1) != null ? row.getCell(1).getStringCellValue() : ""; // MOD
+            String mod2 = row.getCell(2) != null ? row.getCell(2).getStringCellValue() : ""; // MOD2
 
-            for (int colIndex = columnStartIndex; colIndex < row.getLastCellNum(); colIndex++) {
-                LocalDate currentDate = parseDateFromHeader(headerRow.getCell(colIndex));
-                Double rate = row.getCell(colIndex).getNumericCellValue();
+            String compositeKey = proc + "_" + mod + "_" + mod2; // Composite key
 
-                if (currentRate == null || !currentRate.equals(rate)) {
-                    if (currentRate != null) {
-                        LocalDate endDate = currentDate.minusDays(1);
-                        rateSpans.add(new RateSpan(code, spanStartDate, endDate, currentRate));
-                    }
-                    currentRate = rate;
-                    spanStartDate = currentDate;
+            List<RateSpan> rateSpans = new ArrayList<>();
+
+            for (int colIndex = 3; colIndex < numColumns; colIndex++) {
+                Cell cell = row.getCell(colIndex);
+                if (cell == null) continue;
+
+                // Get the start date from the header
+                Cell headerCell = headerRow.getCell(colIndex);
+                LocalDate startDate = parseDateFromHeader(headerCell);
+
+                // Get the end date (minus one day from the next start date or 12/31/9999 for the last column)
+                LocalDate endDate;
+                if (colIndex + 1 < numColumns) {
+                    Cell nextHeaderCell = headerRow.getCell(colIndex + 1);
+                    endDate = parseDateFromHeader(nextHeaderCell).minusDays(1);
+                } else {
+                    endDate = LocalDate.of(9999, 12, 31); // Open-ended date for the last column
                 }
 
-                // Special case for the last column
-                if (colIndex == row.getLastCellNum() - 1) {
-                    LocalDate endDate = LocalDate.of(9999, 12, 31); // Open-ended date
-                    rateSpans.add(new RateSpan(code, spanStartDate, endDate, currentRate));
-                }
+                // Get the rate from the current cell
+                double rate = cell.getNumericCellValue();
+
+                // Add to rate spans list
+                rateSpans.add(new RateSpan(startDate, endDate, rate));
+            }
+
+            // Combine spans where rates are the same
+            rateSpansMap.put(compositeKey, combineRateSpans(rateSpans));
+        }
+
+        // Write the output file
+        int outputRowNum = 0;
+        for (Map.Entry<String, List<RateSpan>> entry : rateSpansMap.entrySet()) {
+            String[] keyParts = entry.getKey().split("_");
+            String proc = keyParts[0];
+            String mod = keyParts[1];
+            String mod2 = keyParts[2];
+
+            for (RateSpan span : entry.getValue()) {
+                Row outputRow = outputSheet.createRow(outputRowNum++);
+                outputRow.createCell(0).setCellValue(proc); // PROC
+                outputRow.createCell(1).setCellValue(mod);  // MOD
+                outputRow.createCell(2).setCellValue(mod2); // MOD2
+                outputRow.createCell(3).setCellValue(span.startDate.format(formatter)); // Start Date
+                outputRow.createCell(4).setCellValue(span.endDate.format(formatter)); // End Date
+                outputRow.createCell(5).setCellValue(span.rate); // Rate
             }
         }
 
-        return rateSpans;
+        FileOutputStream outputStream = new FileOutputStream("/mnt/data/Output Rate History.xlsx"); // Adjust path
+        outputWorkbook.write(outputStream);
+        outputStream.close();
+
+        workbook.close();
+        outputWorkbook.close();
     }
 
-    private static LocalDate parseDateFromHeader(Cell cell) {
-        if (cell == null) {
-            throw new IllegalArgumentException("Cell is null.");
-        }
+    // Method to combine rate spans where rates are consecutive and equal
+    private static List<RateSpan> combineRateSpans(List<RateSpan> rateSpans) {
+        List<RateSpan> combinedSpans = new ArrayList<>();
+        if (rateSpans.isEmpty()) return combinedSpans;
 
-        // Check if the cell contains a numeric or string value
+        RateSpan currentSpan = rateSpans.get(0);
+        for (int i = 1; i < rateSpans.size(); i++) {
+            RateSpan nextSpan = rateSpans.get(i);
+            if (currentSpan.rate == nextSpan.rate) {
+                currentSpan.endDate = nextSpan.endDate; // Extend the current span
+            } else {
+                combinedSpans.add(currentSpan);
+                currentSpan = nextSpan; // Start a new span
+            }
+        }
+        combinedSpans.add(currentSpan); // Add the last span
+
+        return combinedSpans;
+    }
+
+    // Method to parse the date from the header (Month/Year format)
+    private static LocalDate parseDateFromHeader(Cell cell) {
         if (cell.getCellType() == CellType.STRING) {
-            // Handle String cell value (MM/yyyy format)
             String headerDateStr = cell.getStringCellValue();
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/yyyy");
-            return LocalDate.parse("01/" + headerDateStr, formatter); // Parsing with a fixed first day of the month
-        } else if (cell.getCellType() == CellType.NUMERIC) {
-            // Handle Numeric cell value (which could be a date)
-            if (DateUtil.isCellDateFormatted(cell)) {
-                // If it's a date, retrieve it as a LocalDate
-                Date date = cell.getDateCellValue();
-                return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-            } else {
-                throw new IllegalStateException("Unexpected numeric cell that is not formatted as a date.");
-            }
-        } else {
-            throw new IllegalStateException("Unexpected cell type: " + cell.getCellType());
+            return LocalDate.parse("01/" + headerDateStr, formatter); // Parse as first day of the month
+        } else if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+            return cell.getDateCellValue().toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
         }
+        throw new IllegalStateException("Invalid date format in header cell");
     }
 
-
-    private static void writeOutputFile(String outputFilePath, List<RateSpan> rateSpans) {
-        try (Workbook workbook = new XSSFWorkbook();
-             FileOutputStream fos = new FileOutputStream(outputFilePath)) {
-
-            Sheet outputSheet = workbook.createSheet("Rate History");
-            createHeader(outputSheet);
-
-            int rowNum = 1;
-            for (RateSpan span : rateSpans) {
-                Row row = outputSheet.createRow(rowNum++);
-                row.createCell(0).setCellValue(span.getCode());
-                row.createCell(1).setCellValue(span.getStartDate().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")));
-                row.createCell(2).setCellValue(span.getEndDate().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")));
-                row.createCell(3).setCellValue(span.getRate());
-            }
-
-            workbook.write(fos);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private static void createHeader(Sheet sheet) {
-        Row headerRow = sheet.createRow(0);
-        headerRow.createCell(0).setCellValue("Code");
-        headerRow.createCell(1).setCellValue("Start Date");
-        headerRow.createCell(2).setCellValue("End Date");
-        headerRow.createCell(3).setCellValue("Rate");
-    }
-
+    // Class to hold rate spans
     static class RateSpan {
-        private final String code;
-        private final LocalDate startDate;
-        private final LocalDate endDate;
-        private final Double rate;
+        LocalDate startDate;
+        LocalDate endDate;
+        double rate;
 
-        public RateSpan(String code, LocalDate startDate, LocalDate endDate, Double rate) {
-            this.code = code;
+        RateSpan(LocalDate startDate, LocalDate endDate, double rate) {
             this.startDate = startDate;
             this.endDate = endDate;
             this.rate = rate;
-        }
-
-        public String getCode() {
-            return code;
-        }
-
-        public LocalDate getStartDate() {
-            return startDate;
-        }
-
-        public LocalDate getEndDate() {
-            return endDate;
-        }
-
-        public Double getRate() {
-            return rate;
         }
     }
 }
