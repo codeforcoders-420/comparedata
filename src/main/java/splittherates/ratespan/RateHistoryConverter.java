@@ -141,4 +141,73 @@ public class RateHistoryConverter {
             this.rate = rate;
         }
     }
+    
+    private static void writeToExcel(Map<String, Map<String, Double>> procCodeRates) {
+        // Create a new workbook and sheet
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("ProcCode Rates");  
+
+        // Create header row
+        Row headerRow = sheet.createRow(0);
+        Cell procHeader = headerRow.createCell(0);
+        procHeader.setCellValue("Proc");
+        Cell mod1Header = headerRow.createCell(1);
+        mod1Header.setCellValue("Mod");
+        Cell mod2Header = headerRow.createCell(2);
+        mod2Header.setCellValue("Mod 2");
+
+        // Get unique months from the map to create headers for each month
+        Set<String> months = procCodeRates.values().iterator().next().keySet();
+        int colIndex = 3;  // Start the months' columns after the first three columns for Proc, Mod, Mod 2
+        for (String month : months) {
+            Cell monthHeader = headerRow.createCell(colIndex++);
+            monthHeader.setCellValue(month);
+        }
+
+        // Fill the rows with proc codes, mods, and rates
+        int rowIndex = 1;
+        for (String procCodeKey : procCodeRates.keySet()) {
+            Row row = sheet.createRow(rowIndex++);
+
+            // Split the procCodeKey into Proc, Mod, Mod 2
+            String[] procMods = procCodeKey.split("\\+");
+            if (procMods.length == 3) {
+                row.createCell(0).setCellValue(procMods[0]); // Proc
+                row.createCell(1).setCellValue(procMods[1]); // Mod
+                row.createCell(2).setCellValue(procMods[2]); // Mod 2
+            }
+
+            // Add the monthly rates in subsequent columns
+            Map<String, Double> monthlyRates = procCodeRates.get(procCodeKey);
+            colIndex = 3;  // Start after the first three columns (Proc, Mod, Mod 2)
+            for (String month : months) {
+                Cell rateCell = row.createCell(colIndex++);
+                Double rate = monthlyRates.get(month);
+                if (rate != null) {
+                    rateCell.setCellValue(rate);
+                } else {
+                    rateCell.setCellValue("N/A");  // Mark missing rates as "N/A"
+                }
+            }
+        }
+
+        // Autosize columns for better readability
+        for (int i = 0; i < months.size() + 3; i++) {
+            sheet.autoSizeColumn(i);
+        }
+
+        // Write the output to an Excel file
+        try (FileOutputStream fileOut = new FileOutputStream("Output_Rates.xlsx")) {
+            workbook.write(fileOut);
+            System.out.println("Output Excel file 'Output_Rates.xlsx' written successfully!");
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                workbook.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 }
