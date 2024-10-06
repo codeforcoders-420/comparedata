@@ -1,5 +1,3 @@
-package splittherates.ratespan;
-
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
@@ -8,11 +6,13 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 public class RateHistoryConverter {
 
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+    private static final DateTimeFormatter headerFormatter = DateTimeFormatter.ofPattern("MMM yyyy");
 
     public static void main(String[] args) throws IOException {
         FileInputStream inputStream = new FileInputStream("/mnt/data/Rate History.xlsx"); // Adjust path accordingly
@@ -25,11 +25,11 @@ public class RateHistoryConverter {
 
         Map<String, List<RateSpan>> rateSpansMap = new LinkedHashMap<>();
 
-        // Read header row (for the dates)
+        // Read header row (for the dates starting from Column D)
         Row headerRow = sheet.getRow(0);
         int numColumns = headerRow.getPhysicalNumberOfCells();
 
-        // Read data starting from the second row
+        // Read data starting from the second row (rowIndex 1)
         for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
             Row row = sheet.getRow(rowIndex);
             if (row == null) continue;
@@ -38,7 +38,8 @@ public class RateHistoryConverter {
             String mod = row.getCell(1) != null ? row.getCell(1).getStringCellValue() : ""; // MOD
             String mod2 = row.getCell(2) != null ? row.getCell(2).getStringCellValue() : ""; // MOD2
 
-            String compositeKey = proc + "_" + mod + "_" + mod2; // Composite key
+            // Create a composite key using PROC, MOD, MOD2
+            String compositeKey = proc + "_" + (mod.isEmpty() ? "EMPTY" : mod) + "_" + (mod2.isEmpty() ? "EMPTY" : mod2);
 
             List<RateSpan> rateSpans = new ArrayList<>();
 
@@ -74,9 +75,11 @@ public class RateHistoryConverter {
         int outputRowNum = 0;
         for (Map.Entry<String, List<RateSpan>> entry : rateSpansMap.entrySet()) {
             String[] keyParts = entry.getKey().split("_");
+
+            // Handling PROC, MOD, MOD2 with the possibility of MOD and MOD2 being empty
             String proc = keyParts[0];
-            String mod = keyParts[1];
-            String mod2 = keyParts[2];
+            String mod = keyParts.length > 1 && !"EMPTY".equals(keyParts[1]) ? keyParts[1] : "";
+            String mod2 = keyParts.length > 2 && !"EMPTY".equals(keyParts[2]) ? keyParts[2] : "";
 
             for (RateSpan span : entry.getValue()) {
                 Row outputRow = outputSheet.createRow(outputRowNum++);
@@ -117,14 +120,15 @@ public class RateHistoryConverter {
         return combinedSpans;
     }
 
-    // Method to parse the date from the header (Month/Year format)
+    // Method to parse the date from the header (MMM yyyy format)
     private static LocalDate parseDateFromHeader(Cell cell) {
         if (cell.getCellType() == CellType.STRING) {
             String headerDateStr = cell.getStringCellValue();
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/yyyy");
-            return LocalDate.parse("01/" + headerDateStr, formatter); // Parse as first day of the month
-        } else if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
-            return cell.getDateCellValue().toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+            try {
+                return LocalDate.parse("01 " + headerDateStr, headerFormatter); // Parse as the first day of the month
+            } catch (DateTimeParseException e) {
+                throw new IllegalStateException("Invalid date format in header: " + headerDateStr, e);
+            }
         }
         throw new IllegalStateException("Invalid date format in header cell");
     }
@@ -139,75 +143,6 @@ public class RateHistoryConverter {
             this.startDate = startDate;
             this.endDate = endDate;
             this.rate = rate;
-        }
-    }
-    
-    private static void writeToExcel(Map<String, Map<String, Double>> procCodeRates) {
-        // Create a new workbook and sheet
-        Workbook workbook = new XSSFWorkbook();
-        Sheet sheet = workbook.createSheet("ProcCode Rates");  
-
-        // Create header row
-        Row headerRow = sheet.createRow(0);
-        Cell procHeader = headerRow.createCell(0);
-        procHeader.setCellValue("Proc");
-        Cell mod1Header = headerRow.createCell(1);
-        mod1Header.setCellValue("Mod");
-        Cell mod2Header = headerRow.createCell(2);
-        mod2Header.setCellValue("Mod 2");
-
-        // Get unique months from the map to create headers for each month
-        Set<String> months = procCodeRates.values().iterator().next().keySet();
-        int colIndex = 3;  // Start the months' columns after the first three columns for Proc, Mod, Mod 2
-        for (String month : months) {
-            Cell monthHeader = headerRow.createCell(colIndex++);
-            monthHeader.setCellValue(month);
-        }
-
-        // Fill the rows with proc codes, mods, and rates
-        int rowIndex = 1;
-        for (String procCodeKey : procCodeRates.keySet()) {
-            Row row = sheet.createRow(rowIndex++);
-
-            // Split the procCodeKey into Proc, Mod, Mod 2
-            String[] procMods = procCodeKey.split("\\+");
-            if (procMods.length == 3) {
-                row.createCell(0).setCellValue(procMods[0]); // Proc
-                row.createCell(1).setCellValue(procMods[1]); // Mod
-                row.createCell(2).setCellValue(procMods[2]); // Mod 2
-            }
-
-            // Add the monthly rates in subsequent columns
-            Map<String, Double> monthlyRates = procCodeRates.get(procCodeKey);
-            colIndex = 3;  // Start after the first three columns (Proc, Mod, Mod 2)
-            for (String month : months) {
-                Cell rateCell = row.createCell(colIndex++);
-                Double rate = monthlyRates.get(month);
-                if (rate != null) {
-                    rateCell.setCellValue(rate);
-                } else {
-                    rateCell.setCellValue("N/A");  // Mark missing rates as "N/A"
-                }
-            }
-        }
-
-        // Autosize columns for better readability
-        for (int i = 0; i < months.size() + 3; i++) {
-            sheet.autoSizeColumn(i);
-        }
-
-        // Write the output to an Excel file
-        try (FileOutputStream fileOut = new FileOutputStream("Output_Rates.xlsx")) {
-            workbook.write(fileOut);
-            System.out.println("Output Excel file 'Output_Rates.xlsx' written successfully!");
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            try {
-                workbook.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
 }
