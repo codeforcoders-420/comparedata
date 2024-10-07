@@ -17,6 +17,7 @@ public class RateHistoryConverter {
 
     private static final DateTimeFormatter headerFormatter = DateTimeFormatter.ofPattern("MMM yyyy");
     private static final DateTimeFormatter fullFormatter = DateTimeFormatter.ofPattern("MMMM yyyy");
+    private static final DateTimeFormatter outputDateFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
 
     public static void main(String[] args) throws IOException {
         String inputFilePath = "/mnt/data/Rate History.xlsx";  // Update with your file path
@@ -63,16 +64,8 @@ public class RateHistoryConverter {
                 rateSpansByCode.put(key, rateSpans);
             }
 
-            // Output logic here (writing to another file or processing the result)
-            // For now, just printing the spans
-            for (Map.Entry<String, List<RateSpan>> entry : rateSpansByCode.entrySet()) {
-                System.out.println("Code: " + entry.getKey());
-                for (RateSpan span : entry.getValue()) {
-                    System.out.println(span);
-                }
-            }
-
-            // Optionally, write the output to an Excel file (not covered here)
+            // Write the rate spans to an Excel file
+            writeRateSpansToExcel(rateSpansByCode, outputFilePath);
         }
     }
 
@@ -167,5 +160,102 @@ public class RateHistoryConverter {
         }
 
         return rateSpans;
+    }
+
+    // New method to write rate spans to an Excel file
+    private static void writeRateSpansToExcel(Map<String, List<RateSpan>> rateSpansByCode, String outputFilePath) throws IOException {
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Rate History");
+
+        // Create header row
+        Row headerRow = sheet.createRow(0);
+        headerRow.createCell(0).setCellValue("PROC");
+        headerRow.createCell(1).setCellValue("MOD");
+        headerRow.createCell(2).setCellValue("MOD2");
+        headerRow.createCell(3).setCellValue("Rate");
+        headerRow.createCell(4).setCellValue("Start Date");
+        headerRow.createCell(5).setCellValue("End Date");
+
+        int rowIndex = 1;  // Start writing from the second row
+
+        // Loop over the rate spans and write each to a new row
+        for (Map.Entry<String, List<RateSpan>> entry : rateSpansByCode.entrySet()) {
+            List<RateSpan> rateSpans = entry.getValue();
+
+            for (RateSpan span : rateSpans) {
+                Row row = sheet.createRow(rowIndex++);
+                row.createCell(0).setCellValue(span.getProcCode());
+                row.createCell(1).setCellValue(span.getMod());
+                row.createCell(2).setCellValue(span.getMod2());
+                row.createCell(3).setCellValue(span.getRate());
+                row.createCell(4).setCellValue(span.getStartDate().format(outputDateFormatter));
+                row.createCell(5).setCellValue(span.getEndDate().format(outputDateFormatter));
+            }
+        }
+
+        // Auto-size columns for better readability
+        for (int i = 0; i <= 5; i++) {
+            sheet.autoSizeColumn(i);
+        }
+
+        // Write the output to a file
+        try (FileOutputStream fos = new FileOutputStream(outputFilePath)) {
+            workbook.write(fos);
+        }
+
+        // Close the workbook
+        workbook.close();
+
+        System.out.println("Output written to: " + outputFilePath);
+    }
+}
+
+// The RateSpan class definition
+class RateSpan {
+    private String procCode;
+    private String mod;
+    private String mod2;
+    private Double rate;
+    private LocalDate startDate;
+    private LocalDate endDate;
+
+    public RateSpan(String procCode, String mod, String mod2, Double rate, LocalDate startDate, LocalDate endDate) {
+        this.procCode = procCode;
+        this.mod = mod;
+        this.mod2 = mod2;
+        this.rate = rate;
+        this.startDate = startDate;
+        this.endDate = endDate;
+    }
+
+    // Getters
+    public String getProcCode() {
+        return procCode;
+    }
+
+    public String getMod() {
+        return mod;
+    }
+
+    public String getMod2() {
+        return mod2;
+    }
+
+    public Double getRate() {
+        return rate;
+    }
+
+    public LocalDate getStartDate() {
+        return startDate;
+    }
+
+    public LocalDate getEndDate() {
+        return endDate;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("RateSpan[PROC=%s, MOD=%s, MOD2=%s, Rate=%.2f, Start=%s, End=%s]",
+                procCode, mod, mod2, rate, startDate, endDate);
     }
 }
