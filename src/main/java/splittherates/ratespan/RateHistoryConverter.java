@@ -132,6 +132,26 @@ public class RateHistoryConverter {
         }
         throw new IllegalStateException("Invalid date format in header cell");
     }
+    
+    private static Double getRateFromCell(Cell cell) {
+        if (cell == null || cell.getCellType() == CellType.BLANK) {
+            return null;  // Handle blank cells
+        }
+
+        if (cell.getCellType() == CellType.NUMERIC) {
+            return cell.getNumericCellValue();  // Return numeric value
+        } else if (cell.getCellType() == CellType.STRING) {
+            // Try to parse the string value as a number (if possible)
+            try {
+                return Double.parseDouble(cell.getStringCellValue().trim());
+            } catch (NumberFormatException e) {
+                return null;  // Return null or handle invalid numeric string
+            }
+        }
+        
+        // If the cell type is not supported, return null or throw an exception
+        return null;
+    }
 
     // Class to hold rate spans
     static class RateSpan {
